@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,6 +44,26 @@ class Settings(BaseSettings):
 
     mercadopago_access_token: str = ""
     mercadopago_webhook_secret: str = ""
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, value: str) -> str:
+        url = value.strip().strip('"').strip("'")
+        if not url:
+            raise ValueError("DATABASE_URL must not be empty")
+
+        if url.startswith("postgresql://") and "+asyncpg" not in url:
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        if "sslmode=require" in url:
+            url = url.replace("sslmode=require", "ssl=require")
+
+        if "channel_binding=require" in url:
+            url = url.replace("&channel_binding=require", "").replace(
+                "channel_binding=require&", ""
+            ).replace("channel_binding=require", "")
+
+        return url.rstrip("&").rstrip("?")
 
 
 @lru_cache
