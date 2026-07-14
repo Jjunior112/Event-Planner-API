@@ -18,8 +18,8 @@ PLAN_LIMITS: dict[WorkspacePlan, PlanLimits] = {
 
 PLAN_PRICES_BRL: dict[WorkspacePlan, int] = {
     WorkspacePlan.FREE: 0,
-    WorkspacePlan.STARTER: 4900,
-    WorkspacePlan.PREMIUM: 14900,
+    WorkspacePlan.STARTER: 999,
+    WorkspacePlan.PREMIUM: 2999,
 }
 
 
