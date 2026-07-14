@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
 
 from app.core.config import get_settings
-from app.models.enums import PlanStatus, WorkspacePlan
+from app.models.enums import PlanStatus, WorkspacePlan, WorkspaceRole
 from app.models.workspace import Workspace
 from app.schemas.workspace import WorkspaceAuth
 
@@ -34,6 +34,36 @@ class BillingService:
             raise HTTPException(400, "Cannot checkout free plan")
 
         return await self._create_stripe_checkout(auth, plan)
+
+    async def cancel_workspace_subscription(self, auth: WorkspaceAuth) -> None:
+        self._require_billing_manager(auth)
+        workspace = auth.workspace
+
+        if workspace.plan == WorkspacePlan.FREE:
+            raise HTTPException(400, "Workspace já está no plano Free")
+
+        if workspace.stripe_subscription_id:
+            if not self.settings.stripe_secret_key:
+                raise HTTPException(503, "Stripe não configurado")
+
+            import stripe
+
+            stripe.api_key = self.settings.stripe_secret_key
+            try:
+                stripe.Subscription.cancel(workspace.stripe_subscription_id)
+            except stripe.error.InvalidRequestError as exc:
+                logger.warning(
+                    "Stripe subscription cancel failed for %s: %s",
+                    workspace.stripe_subscription_id,
+                    exc,
+                )
+
+        workspace.plan = WorkspacePlan.FREE
+        workspace.plan_status = PlanStatus.CANCELED
+        workspace.stripe_subscription_id = None
+        workspace.subscription_current_period_end = None
+        await self.session.flush()
+        logger.info("Assinatura cancelada para workspace %s", workspace.id)
 
     async def _create_stripe_checkout(
         self,
@@ -215,4 +245,14 @@ class BillingService:
         if workspace:
             workspace.plan = WorkspacePlan.FREE
             workspace.plan_status = PlanStatus.CANCELED
+            workspace.stripe_subscription_id = None
+            workspace.subscription_current_period_end = None
             await self.session.flush()
+
+    @staticmethod
+    def _require_billing_manager(auth: WorkspaceAuth) -> None:
+        if auth.membership.role not in (WorkspaceRole.OWNER, WorkspaceRole.ADMIN):
+            raise HTTPException(
+                403,
+                "Apenas owner ou admin pode gerenciar a assinatura",
+            )
