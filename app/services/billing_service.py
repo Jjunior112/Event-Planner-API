@@ -85,20 +85,21 @@ class BillingService:
         sig = request.headers.get("stripe-signature", "")
 
         try:
-            event = stripe.Webhook.construct_event(
+            stripe_event = stripe.Webhook.construct_event(
                 payload, sig, self.settings.stripe_webhook_secret
             )
         except Exception as exc:
             logger.warning("Stripe webhook signature validation failed: %s", exc)
             raise HTTPException(400, f"Webhook inválido: {exc}") from exc
 
+        event = self._stripe_dict(stripe_event)
         event_type = event.get("type", "unknown")
         logger.info("Stripe webhook received: %s", event_type)
 
         try:
             if event_type == "checkout.session.completed":
-                checkout_session = event["data"]["object"]
-                metadata = checkout_session.get("metadata") or {}
+                checkout_session = self._stripe_dict(event.get("data", {}).get("object"))
+                metadata = self._stripe_dict(checkout_session.get("metadata"))
                 workspace_id_raw = (
                     metadata.get("workspace_id")
                     or checkout_session.get("client_reference_id")
@@ -122,7 +123,7 @@ class BillingService:
                     ),
                 )
             elif event_type == "customer.subscription.deleted":
-                subscription = event["data"]["object"]
+                subscription = self._stripe_dict(event.get("data", {}).get("object"))
                 await self._cancel_subscription(
                     stripe_subscription_id=self._stripe_id(subscription.get("id"))
                 )
@@ -133,6 +134,17 @@ class BillingService:
         return {"received": True}
 
     @staticmethod
+    def _stripe_dict(value: object | None) -> dict:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        to_dict = getattr(value, "to_dict", None)
+        if callable(to_dict):
+            return to_dict()
+        return {}
+
+    @staticmethod
     def _stripe_id(value: object | None) -> str | None:
         if value is None:
             return None
@@ -140,6 +152,10 @@ class BillingService:
             return value
         if isinstance(value, dict):
             raw_id = value.get("id")
+            return str(raw_id) if raw_id is not None else None
+        to_dict = getattr(value, "to_dict", None)
+        if callable(to_dict):
+            raw_id = to_dict().get("id")
             return str(raw_id) if raw_id is not None else None
         return str(value)
 
