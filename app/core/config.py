@@ -1,3 +1,4 @@
+import json
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -20,6 +21,7 @@ class Settings(BaseSettings):
     )
 
     cors_origins: list[str] = ["http://localhost:3000"]
+    cors_origin_regex: str | None = r"https://.*\.vercel\.app"
 
     jwt_secret_key: str = "change-me-in-production-use-a-long-random-string"
     jwt_algorithm: str = "HS256"
@@ -44,6 +46,43 @@ class Settings(BaseSettings):
 
     mercadopago_access_token: str = ""
     mercadopago_webhook_secret: str = ""
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: object) -> list[str]:
+        if value is None:
+            return ["http://localhost:3000"]
+
+        if isinstance(value, list):
+            return [str(origin).strip().rstrip("/") for origin in value if str(origin).strip()]
+
+        if isinstance(value, str):
+            raw = value.strip().strip('"').strip("'")
+            if not raw:
+                return []
+
+            if raw.startswith("["):
+                parsed = json.loads(raw)
+                if not isinstance(parsed, list):
+                    raise ValueError("CORS_ORIGINS must be a JSON array")
+                return [str(origin).strip().rstrip("/") for origin in parsed if str(origin).strip()]
+
+            if "," in raw:
+                return [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
+
+            return [raw.rstrip("/")]
+
+        raise ValueError("CORS_ORIGINS has an invalid format")
+
+    @field_validator("cors_origin_regex", mode="before")
+    @classmethod
+    def normalize_cors_origin_regex(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            cleaned = value.strip().strip('"').strip("'")
+            return cleaned or None
+        return value
 
     @field_validator("database_url")
     @classmethod
