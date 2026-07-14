@@ -68,6 +68,8 @@ class BillingService:
     async def handle_stripe_webhook(self, request: Request) -> dict:
         if not self.settings.stripe_webhook_secret:
             raise HTTPException(503, "Stripe webhook não configurado")
+        if not self.settings.stripe_secret_key:
+            raise HTTPException(503, "Stripe não configurado")
 
         import stripe
 
@@ -80,21 +82,55 @@ class BillingService:
                 payload, sig, self.settings.stripe_webhook_secret
             )
         except Exception as exc:
+            logger.warning("Stripe webhook signature validation failed: %s", exc)
             raise HTTPException(400, f"Webhook inválido: {exc}") from exc
 
-        if event["type"] == "checkout.session.completed":
-            session = event["data"]["object"]
-            await self._activate_plan(
-                workspace_id=UUID(session["metadata"]["workspace_id"]),
-                plan=PLAN_MAP.get(session["metadata"]["plan"], WorkspacePlan.STARTER),
-                stripe_customer_id=session.get("customer"),
-                stripe_subscription_id=session.get("subscription"),
-            )
-        elif event["type"] == "customer.subscription.deleted":
-            sub = event["data"]["object"]
-            await self._cancel_subscription(stripe_subscription_id=sub["id"])
+        event_type = event.get("type", "unknown")
+        logger.info("Stripe webhook received: %s", event_type)
+
+        try:
+            if event_type == "checkout.session.completed":
+                checkout_session = event["data"]["object"]
+                metadata = checkout_session.get("metadata") or {}
+                workspace_id_raw = metadata.get("workspace_id")
+                plan_name = metadata.get("plan")
+
+                if not workspace_id_raw:
+                    logger.warning(
+                        "checkout.session.completed sem workspace_id em metadata: %s",
+                        metadata,
+                    )
+                    return {"received": True}
+
+                await self._activate_plan(
+                    workspace_id=UUID(str(workspace_id_raw)),
+                    plan=PLAN_MAP.get(plan_name, WorkspacePlan.STARTER),
+                    stripe_customer_id=self._stripe_id(checkout_session.get("customer")),
+                    stripe_subscription_id=self._stripe_id(
+                        checkout_session.get("subscription")
+                    ),
+                )
+            elif event_type == "customer.subscription.deleted":
+                subscription = event["data"]["object"]
+                await self._cancel_subscription(
+                    stripe_subscription_id=self._stripe_id(subscription.get("id"))
+                )
+        except Exception:
+            logger.exception("Stripe webhook processing failed for event %s", event_type)
+            raise
 
         return {"received": True}
+
+    @staticmethod
+    def _stripe_id(value: object | None) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            raw_id = value.get("id")
+            return str(raw_id) if raw_id is not None else None
+        return str(value)
 
     async def _activate_plan(
         self,
