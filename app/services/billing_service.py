@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
 from app.core.config import get_settings
 from app.models.enums import PlanStatus, WorkspacePlan
@@ -62,6 +63,12 @@ class BillingService:
             cancel_url=f"{self.settings.frontend_url}/w/{workspace.id}/billing?canceled=true",
             metadata={"workspace_id": str(workspace.id), "plan": plan.value},
             client_reference_id=str(workspace.id),
+            subscription_data={
+                "metadata": {
+                    "workspace_id": str(workspace.id),
+                    "plan": plan.value,
+                }
+            },
         )
         return {"checkout_url": session.url, "provider": "stripe"}
 
@@ -92,19 +99,23 @@ class BillingService:
             if event_type == "checkout.session.completed":
                 checkout_session = event["data"]["object"]
                 metadata = checkout_session.get("metadata") or {}
-                workspace_id_raw = metadata.get("workspace_id")
+                workspace_id_raw = (
+                    metadata.get("workspace_id")
+                    or checkout_session.get("client_reference_id")
+                )
                 plan_name = metadata.get("plan")
 
                 if not workspace_id_raw:
                     logger.warning(
-                        "checkout.session.completed sem workspace_id em metadata: %s",
+                        "checkout.session.completed sem workspace_id: metadata=%s ref=%s",
                         metadata,
+                        checkout_session.get("client_reference_id"),
                     )
                     return {"received": True}
 
                 await self._activate_plan(
                     workspace_id=UUID(str(workspace_id_raw)),
-                    plan=PLAN_MAP.get(plan_name, WorkspacePlan.STARTER),
+                    plan=self._resolve_plan(plan_name),
                     stripe_customer_id=self._stripe_id(checkout_session.get("customer")),
                     stripe_subscription_id=self._stripe_id(
                         checkout_session.get("subscription")
@@ -132,6 +143,22 @@ class BillingService:
             return str(raw_id) if raw_id is not None else None
         return str(value)
 
+    def _resolve_plan(self, plan_name: str | None) -> WorkspacePlan:
+        if plan_name in PLAN_MAP:
+            return PLAN_MAP[plan_name]
+        return WorkspacePlan.STARTER
+
+    async def _get_workspace(self, workspace_id: UUID) -> Workspace | None:
+        result = await self.session.execute(
+            select(Workspace)
+            .where(
+                Workspace.id == workspace_id,
+                Workspace.deleted_at.is_(None),
+            )
+            .options(noload(Workspace.members))
+        )
+        return result.scalar_one_or_none()
+
     async def _activate_plan(
         self,
         workspace_id: UUID,
@@ -139,11 +166,9 @@ class BillingService:
         stripe_customer_id: str | None = None,
         stripe_subscription_id: str | None = None,
     ) -> None:
-        result = await self.session.execute(
-            select(Workspace).where(Workspace.id == workspace_id)
-        )
-        workspace = result.scalar_one_or_none()
+        workspace = await self._get_workspace(workspace_id)
         if not workspace:
+            logger.warning("Workspace %s não encontrado para ativação de plano", workspace_id)
             return
 
         workspace.plan = plan
@@ -154,6 +179,7 @@ class BillingService:
             workspace.stripe_subscription_id = stripe_subscription_id
         workspace.subscription_current_period_end = datetime.now(UTC)
         await self.session.flush()
+        logger.info("Plano %s ativado para workspace %s", plan.value, workspace_id)
 
     async def _cancel_subscription(
         self,
@@ -162,9 +188,12 @@ class BillingService:
         if not stripe_subscription_id:
             return
         result = await self.session.execute(
-            select(Workspace).where(
-                Workspace.stripe_subscription_id == stripe_subscription_id
+            select(Workspace)
+            .where(
+                Workspace.stripe_subscription_id == stripe_subscription_id,
+                Workspace.deleted_at.is_(None),
             )
+            .options(noload(Workspace.members))
         )
         workspace = result.scalar_one_or_none()
         if workspace:
