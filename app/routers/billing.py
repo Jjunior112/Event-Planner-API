@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -18,11 +18,9 @@ async def create_checkout(
     session: AsyncSession = Depends(get_db),
 ) -> CheckoutResponse:
     if data.plan not in (WorkspacePlan.STARTER, WorkspacePlan.PREMIUM):
-        from fastapi import HTTPException
-
         raise HTTPException(400, "Plano inválido para checkout")
     service = BillingService(session)
-    result = await service.create_checkout(auth, data.provider, data.plan)
+    result = await service.create_checkout(auth, data.plan)
     return CheckoutResponse(**result)
 
 
@@ -36,13 +34,3 @@ async def stripe_webhook(
 ) -> dict:
     service = BillingService(session)
     return await service.handle_stripe_webhook(request)
-
-
-@webhooks_router.post("/mercadopago")
-async def mercadopago_webhook(
-    request: Request,
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    data = await request.json()
-    service = BillingService(session)
-    return await service.handle_mercadopago_webhook(data)

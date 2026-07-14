@@ -93,7 +93,7 @@ O front-end React está em `frontend/`. Veja [frontend/README.md](frontend/READM
 | M15 | React Base (auth, dashboard, rotas) | ✅ |
 | M16 | Gráficos financeiros | ✅ |
 | M17 | Gestão de membros/permissões | ✅ |
-| M18 | Stripe / Mercado Pago webhooks | ✅ |
+| M18 | Stripe webhooks | ✅ |
 | M19 | Planos (Free, Starter, Premium) | ✅ |
 | M20 | Limites por plano | ✅ |
 | M21 | Admin Panel | ✅ |

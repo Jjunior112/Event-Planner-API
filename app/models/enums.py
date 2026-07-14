@@ -21,11 +21,6 @@ class PlanStatus(str, enum.Enum):
     TRIALING = "trialing"
 
 
-class BillingProvider(str, enum.Enum):
-    STRIPE = "stripe"
-    MERCADOPAGO = "mercadopago"
-
-
 class QuoteStatus(str, enum.Enum):
     PENDING = "pending"
     APPROVED = "approved"

@@ -44,9 +44,6 @@ class Settings(BaseSettings):
     stripe_starter_price_id: str = ""
     stripe_premium_price_id: str = ""
 
-    mercadopago_access_token: str = ""
-    mercadopago_webhook_secret: str = ""
-
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, value: object) -> list[str]:

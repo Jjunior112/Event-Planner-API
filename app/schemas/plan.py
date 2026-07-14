@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from app.models.enums import BillingProvider, PlanStatus, WorkspacePlan
+from app.models.enums import PlanStatus, WorkspacePlan
 
 
 class PlanLimitsResponse(BaseModel):
@@ -24,7 +24,6 @@ class WorkspacePlanResponse(BaseModel):
 
 
 class CheckoutRequest(BaseModel):
-    provider: BillingProvider
     plan: WorkspacePlan
 
 
